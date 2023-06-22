@@ -39,7 +39,8 @@ jobs:
     - name: Checkout Pimoroni Pico Libraries
       uses: actions/checkout@v2
       with:
-        repository: pimoroni/pimoroni-pico
+        repository: MichaelBell/pimoroni-pico
+        ref: dv_stick
         path: pimoroni-pico
 
     # Checkout the Pico SDK
