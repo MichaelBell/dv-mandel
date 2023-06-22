@@ -1,19 +1,148 @@
-#include "pico_explorer.hpp"
-#include "drivers/st7789/st7789.hpp"
+#include <stdio.h>
+#include "hardware/uart.h"
+#include "pico/multicore.h"
+#include "drivers/dv_display/dv_display.hpp"
 #include "libraries/pico_graphics/pico_graphics.hpp"
+
+extern "C" {
+#include "mandelbrot.h"
+}
 
 using namespace pimoroni;
 
-ST7789 st7789(PicoExplorer::WIDTH, PicoExplorer::HEIGHT, ROTATE_0, false, get_spi_pins(BG_SPI_FRONT));
-PicoGraphics_PenRGB332 graphics(st7789.width, st7789.height, nullptr);
+#define FRAME_WIDTH 720
+#define FRAME_HEIGHT 480
+
+static DVDisplay display(FRAME_WIDTH, FRAME_HEIGHT);
+static PicoGraphics_PenDV_P5 graphics(FRAME_WIDTH, FRAME_HEIGHT, display);
+
+static FractalBuffer fractal;
+
+void on_uart_rx() {
+    while (uart_is_readable(uart1)) {
+        uint8_t ch = uart_getc(uart1);
+        putc(ch, stdout);
+    }
+}
+
+void init_palette() {
+    graphics.create_pen(0, 0, 0);
+    for (int i = 0; i < 31; ++i) {
+        graphics.create_pen_hsv(i * (1.f / 31.f), 1.0f, 0.5f + (i & 7) * (0.5f / 7.f));
+    }
+}
+
+void init_mandel() {
+  fractal.rows = FRAME_HEIGHT / 2;
+  fractal.cols = FRAME_WIDTH;
+  fractal.max_iter = 47;
+  fractal.iter_offset = 0;
+  fractal.minx = -2.25f;
+  fractal.maxx = 0.75f;
+  fractal.miny = -1.6f;
+  fractal.maxy = 0.f - (1.6f / FRAME_HEIGHT); // Half a row
+  fractal.use_cycle_check = true;
+  init_fractal(&fractal);
+}
+
+#define NUM_ZOOMS 64
+static uint32_t zoom_count = 0;
+
+void zoom_mandel() {
+  if (++zoom_count == NUM_ZOOMS)
+  {
+    init_mandel();
+    zoom_count = 0;
+    sleep_ms(2000);
+    return;
+  }
+
+  float zoomx = -.75f - .7f * ((float)zoom_count / (float)NUM_ZOOMS);
+  float sizex = fractal.maxx - fractal.minx;
+  float sizey = fractal.miny * -2.f;
+  float zoomr = 0.96f * 0.5f;
+  fractal.minx = zoomx - zoomr * sizex;
+  fractal.maxx = zoomx + zoomr * sizex;
+  fractal.miny = -zoomr * sizey;
+  fractal.maxy = 0.f + fractal.miny / FRAME_HEIGHT;
+  init_fractal(&fractal);
+}
+
+void display_row(int y, uint8_t* buf) {
+    for (int i = 0; i < FRAME_WIDTH; ++i)
+    {
+        uint8_t col = buf[i];
+        if (col > 31) col -= 31;
+        graphics.set_pen(col);
+        graphics.set_pixel({i, y});
+    }
+}
+
+static uint8_t row_buf_core1[FRAME_WIDTH];
+void core1_main() {
+    while (true) {
+        int y = multicore_fifo_pop_blocking();
+        generate_one_line(&fractal, row_buf_core1, y);
+        multicore_fifo_push_blocking(y);
+    }
+}
+
+static uint8_t row_buf[FRAME_WIDTH];
+void draw_two_rows(int y) {
+    multicore_fifo_push_blocking(y+1);
+    generate_one_line(&fractal, row_buf, y);
+
+    display_row(y, row_buf);
+    display_row(FRAME_HEIGHT - 1 - y, row_buf);
+
+    multicore_fifo_pop_blocking();
+    display_row(y+1, row_buf_core1);
+    display_row(FRAME_HEIGHT - 1 - (y+1), row_buf_core1);
+}
+
+void draw_mandel() {
+    for (int y = 0; y < FRAME_HEIGHT / 2; y += 2)
+    {
+        draw_two_rows(y);
+    }
+    display.flip();
+}
 
 int main() {
-    graphics.set_pen(255, 0, 0);
+  set_sys_clock_khz(216000, true);
+
+  stdio_init_all();
+
+  // Relay UART RX from the display driver
+  gpio_set_function(5, GPIO_FUNC_UART);
+  uart_init(uart1, 115200);
+  uart_set_hw_flow(uart1, false, false);
+  uart_set_format(uart1, 8, 1, UART_PARITY_NONE);
+  uart_set_fifo_enabled(uart1, false);
+  irq_set_exclusive_handler(UART1_IRQ, on_uart_rx);
+  irq_set_enabled(UART1_IRQ, true);
+  uart_set_irq_enables(uart1, true, false);
+
+  display.init();
+  display.set_mode(DVDisplay::MODE_PALETTE);
+
+    init_palette();
+
+    graphics.set_pen(0);
+    graphics.clear();
+    display.flip();
+    graphics.set_pen(0);
+    graphics.clear();
+
+    multicore_launch_core1(core1_main);
+
+    init_mandel();
+    draw_mandel();
 
     while(true) {
-        graphics.pixel(Point(0, 0));
-
-        // now we've done our drawing let's update the screen
-        st7789.update(&graphics);
+        absolute_time_t start_time = get_absolute_time();
+        zoom_mandel();
+        draw_mandel();
+        printf("Drawing zoom %d took %.2fms\n", zoom_count, absolute_time_diff_us(start_time, get_absolute_time()) * 0.001f);
     }
 }
