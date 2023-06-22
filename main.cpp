@@ -13,7 +13,18 @@ using namespace pimoroni;
 #define FRAME_WIDTH 720
 #define FRAME_HEIGHT 480
 
-static DVDisplay display(FRAME_WIDTH, FRAME_HEIGHT);
+class MirroredDVDisplay : public DVDisplay
+{
+public:
+    MirroredDVDisplay(uint16_t width, uint16_t height)
+        : DVDisplay(width, height, DVDisplay::MODE_PALETTE)
+    {}
+
+protected:
+    void write_header() override;
+};
+
+static MirroredDVDisplay display(FRAME_WIDTH, FRAME_HEIGHT);
 static PicoGraphics_PenDV_P5 graphics(FRAME_WIDTH, FRAME_HEIGHT, display);
 
 static FractalBuffer fractal;
@@ -93,11 +104,11 @@ void draw_two_rows(int y) {
     generate_one_line(&fractal, row_buf, y);
 
     display_row(y, row_buf);
-    display_row(FRAME_HEIGHT - 1 - y, row_buf);
+    //display_row(FRAME_HEIGHT - 1 - y, row_buf);
 
     multicore_fifo_pop_blocking();
     display_row(y+1, row_buf_core1);
-    display_row(FRAME_HEIGHT - 1 - (y+1), row_buf_core1);
+    //display_row(FRAME_HEIGHT - 1 - (y+1), row_buf_core1);
 }
 
 void draw_mandel() {
@@ -124,7 +135,6 @@ int main() {
   uart_set_irq_enables(uart1, true, false);
 
   display.init();
-  display.set_mode(DVDisplay::MODE_PALETTE);
 
     init_palette();
 
@@ -144,5 +154,31 @@ int main() {
         zoom_mandel();
         draw_mandel();
         printf("Drawing zoom %d took %.2fms\n", zoom_count, absolute_time_diff_us(start_time, get_absolute_time()) * 0.001f);
+    }
+}
+
+void MirroredDVDisplay::write_header()
+{
+    write_header_preamble();
+
+    uint32_t buf[8];
+    uint addr = 4 * 7;
+    uint line_type = 0x80000000u + ((uint)mode << 28);
+    printf("Write header, line type %08x\n", line_type);
+    for (int i = 0; i < height/2; i += 8) {
+      for (int j = 0; j < 8; ++j) {
+        buf[j] = line_type + ((uint32_t)h_repeat << 24) + ((i + j) * width * 6) + base_address;
+      }
+      ram.write(addr, buf, 8 * 4);
+      ram.wait_for_finish_blocking();
+      addr += 4 * 8;
+    }
+    for (int i = 0; i < height/2; i += 8) {
+      for (int j = 0; j < 8; ++j) {
+        buf[j] = line_type + ((uint32_t)h_repeat << 24) + ((height/2 - 1 - (i + j)) * width * 6) + base_address;
+      }
+      ram.write(addr, buf, 8 * 4);
+      ram.wait_for_finish_blocking();
+      addr += 4 * 8;
     }
 }
