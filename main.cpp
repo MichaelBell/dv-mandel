@@ -36,17 +36,17 @@ void on_uart_rx() {
     }
 }
 
-void init_palette() {
+static void init_palette() {
     graphics.create_pen(0, 0, 0);
     for (int i = 0; i < 31; ++i) {
         graphics.create_pen_hsv(i * (1.f / 31.f), 1.0f, 0.5f + (i & 7) * (0.5f / 7.f));
     }
 }
 
-void init_mandel() {
+static void init_mandel() {
   fractal.rows = FRAME_HEIGHT / 2;
   fractal.cols = FRAME_WIDTH;
-  fractal.max_iter = 47;
+  fractal.max_iter = 55;
   fractal.iter_offset = 0;
   fractal.minx = -2.25f;
   fractal.maxx = 0.75f;
@@ -59,7 +59,7 @@ void init_mandel() {
 #define NUM_ZOOMS 64
 static uint32_t zoom_count = 0;
 
-void zoom_mandel() {
+static void zoom_mandel() {
   if (++zoom_count == NUM_ZOOMS)
   {
     init_mandel();
@@ -79,14 +79,16 @@ void zoom_mandel() {
   init_fractal(&fractal);
 }
 
-void display_row(int y, uint8_t* buf) {
+static void display_row(int y, uint8_t* buf) {
     for (int i = 0; i < FRAME_WIDTH; ++i)
     {
         uint8_t col = buf[i];
-        if (col > 31) col -= 31;
-        graphics.set_pen(col);
-        graphics.set_pixel({i, y});
+        if (col > 46) col -= 23;
+        else if (col > 31) col -= 31;
+        buf[i] = col << 2;
     }
+
+    display.write_palette_pixel_span({0, y}, FRAME_WIDTH, buf);
 }
 
 static uint8_t row_buf_core1[FRAME_WIDTH];
@@ -99,16 +101,14 @@ void core1_main() {
 }
 
 static uint8_t row_buf[FRAME_WIDTH];
-void draw_two_rows(int y) {
+static void draw_two_rows(int y) {
     multicore_fifo_push_blocking(y+1);
     generate_one_line(&fractal, row_buf, y);
 
     display_row(y, row_buf);
-    //display_row(FRAME_HEIGHT - 1 - y, row_buf);
 
     multicore_fifo_pop_blocking();
     display_row(y+1, row_buf_core1);
-    //display_row(FRAME_HEIGHT - 1 - (y+1), row_buf_core1);
 }
 
 void draw_mandel() {
