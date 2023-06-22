@@ -93,6 +93,7 @@ static void display_row(int y, uint8_t* buf) {
 
 static uint8_t row_buf_core1[FRAME_WIDTH];
 void core1_main() {
+    mandel_init();
     while (true) {
         int y = multicore_fifo_pop_blocking();
         generate_one_line(&fractal, row_buf_core1, y);
@@ -134,6 +135,7 @@ int main() {
   irq_set_enabled(UART1_IRQ, true);
   uart_set_irq_enables(uart1, true, false);
 
+  mandel_init();
   display.init();
 
     init_palette();

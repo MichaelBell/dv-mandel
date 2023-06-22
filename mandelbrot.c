@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include "pico/stdlib.h"
+#include "hardware/interp.h"
 
 #include "mandelbrot.h"
 
@@ -33,17 +34,6 @@ static inline fixed_pt_t mul(fixed_pt_t a, fixed_pt_t b)
 // a * b * 2
 static inline fixed_pt_t mul2(fixed_pt_t a, fixed_pt_t b)
 {
-#if 0
-  int32_t ah = a >> 12;
-  int32_t al = a & 0xfff;
-  int32_t bh = b >> 13;
-  int32_t bl = b & 0x1fff;
-
-  interp0->accum[0] = ah * bl;
-  interp0->accum[1] = al * bh;
-  interp0->base[2] = ah * bh;
-  return interp0->peek[2];
-#else
   int32_t ah = a >> 12;
   int32_t al = (a & 0xfff) << 1;
   int32_t bh = b >> 13;
@@ -52,7 +42,6 @@ static inline fixed_pt_t mul2(fixed_pt_t a, fixed_pt_t b)
   fixed_pt_t r = ((ah * bl) + (al * bh)) >> 13;
   r += ah * bh;
   return r;
-#endif
 }
 
 static inline fixed_pt_t square(fixed_pt_t a) {
@@ -72,18 +61,10 @@ fixed_pt_t make_fixedf(float x) {
 
 void mandel_init()
 {
-  // Not curently used
-#if 0
   interp_config cfg = interp_default_config();
-  interp_config_set_add_raw(&cfg, false);
-  interp_config_set_shift(&cfg, 13);
-  interp_config_set_mask(&cfg, 0, 31 - 13);
-  interp_config_set_signed(&cfg, true);
   interp_set_config(interp0, 0, &cfg);
-  interp_config_set_shift(&cfg, 12);
-  interp_config_set_mask(&cfg, 0, 31 - 12);
-  interp_set_config(interp0, 1, &cfg);
-#endif
+  interp_set_config(interp1, 0, &cfg);
+  interp0->base[0] = 1;
 }
 
 void init_fractal(FractalBuffer* f)
@@ -131,12 +112,19 @@ static inline void generate_one_cycle_check(FractalBuffer* f, fixed_pt_t x0, fix
   fixed_pt_t y = y0;
   fixed_pt_t oldx = 0, oldy = 0;
 
-  uint16_t k = 1;
-  for (; k < f->max_iter; ++k) {
+  interp0->accum[0] = 1;
+  //uint32_t k = 1;
+  while (true) {
     fixed_pt_t x_square = square(x);
     fixed_pt_t y_square = square(y);
     if (x_square + y_square > ESCAPE_SQUARE) break;
 
+    uint32_t k = interp0->pop[0];
+    if (k == f->max_iter) {
+      *buffptr = 0;
+      f->count_inside++;
+      return;
+    }
     if (k >= MIN_CYCLE_CHECK_ITER) {
       if ((k & (MAX_CYCLE_LEN - 1)) == 0) {
         oldx = x - CYCLE_TOLERANCE;
@@ -146,8 +134,9 @@ static inline void generate_one_cycle_check(FractalBuffer* f, fixed_pt_t x0, fix
       {
         if ((uint32_t)(x - oldx) < (2*CYCLE_TOLERANCE) && (uint32_t)(y - oldy) < (2*CYCLE_TOLERANCE)) {
           // Found a cycle
-          k = f->max_iter;
-          break;
+          *buffptr = 0;
+          f->count_inside++;
+          return;
         }
       }
     }
@@ -156,15 +145,12 @@ static inline void generate_one_cycle_check(FractalBuffer* f, fixed_pt_t x0, fix
     y = mul2(x,y) + y0;
     x = nextx;
   }
-  if (k == f->max_iter) {
-    *buffptr = 0;
-    f->count_inside++;
-  } else {
-    if (k > f->iter_offset) k -= f->iter_offset;
-    else k = 1;
-    *buffptr = k;
-    if (f->min_iter > k) f->min_iter = k;
-  }
+
+  uint16_t k = interp0->accum[0];
+  if (k > f->iter_offset) k -= f->iter_offset;
+  else k = 1;
+  *buffptr = k;
+  if (f->min_iter > k) f->min_iter = k;
 }
 
 void generate_one_line(FractalBuffer* f, uint8_t* buf, uint16_t ipos)
@@ -173,9 +159,12 @@ void generate_one_line(FractalBuffer* f, uint8_t* buf, uint16_t ipos)
 
   fixed_pt_t y0 = f->iminy + ipos * f->incy;
   fixed_pt_t x0 = f->iminx;
+  uint8_t* buf_end = buf + f->cols;
+  interp1->base[0] = f->incx;
+  interp1->accum[0] = f->iminx;
 
-  for (int16_t j = 0; j < f->cols; ++j, x0 += f->incx) {
-    if (f->use_cycle_check) generate_one_cycle_check(f, x0, y0, buf++);
-    else generate_one(f, x0, y0, buf++);
+  while (buf < buf_end) {
+    generate_one_cycle_check(f, x0, y0, buf++);
+    x0 = interp1->pop[0];
   }
 }

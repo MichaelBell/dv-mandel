@@ -31,6 +31,7 @@ include(libraries/pico_graphics/pico_graphics)
 target_link_libraries(${NAME}
     pico_multicore
     hardware_uart
+    hardware_interp
     pimoroni_i2c
     dv_display
     pico_graphics
