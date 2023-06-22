@@ -8,7 +8,7 @@
 
 // Cycle checking parameters
 #define MAX_CYCLE_LEN 8          // Must be power of 2
-#define MIN_CYCLE_CHECK_ITER 32  // Must be multiple of max cycle len
+#define MIN_CYCLE_CHECK_ITER 24  // Must be multiple of max cycle len
 #define CYCLE_TOLERANCE (1<<18)
 
 // Fixed point with 6 bits to the left of the point.
